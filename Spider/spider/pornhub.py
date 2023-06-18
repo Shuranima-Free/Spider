@@ -2,12 +2,12 @@
 # -*- coding:utf-8 -*-
 # @FileName   :pornhub.py
 # @Author     :Shuranima
-# @Time       :2020/8/11 19:00
+# @Time       :2023/6/18 15:52
 
 import requests
 import random
 from lxml import etree
-import execjs
+import js2py
 
 from spider.ua import HEADERS
 
@@ -22,6 +22,8 @@ class Pornhub:
         self.headers = {
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
                           'Chrome/83.0.4103.106 Safari/537.36'}
+        self.ses = requests.session()
+        self.ses.get(url='https://cn.pornhub.com/', headers=self.headers)
         self.__judge_the_wall()
 
     def __judge_the_wall(self):
@@ -30,7 +32,7 @@ class Pornhub:
         :return: yes:status_code no:网速不佳或它未在墙外，请它出去后再使用~
         """
         try:
-            response = requests.get('https://www.google.com/', self.headers, timeout=5)
+            response = requests.get('https://cn.pornhub.com/', self.headers, timeout=5)
             return response.status_code
         except Exception:
             raise Exception('网速不佳或它未在墙外，请它出去后再使用~')
@@ -43,7 +45,8 @@ class Pornhub:
         """
         self.headers = random.choice(HEADERS)
         try:
-            with requests.get(url, self.headers, timeout=180) as response:
+
+            with self.ses.get(url=url, headers=self.headers, timeout=180) as response:
                 return response
         except Exception as e:
             print(e)
@@ -90,9 +93,11 @@ class Pornhub:
         :param data_id: 详情页ID
         :return: MP4下载地址
         """
+        #print(url)
         response = self.__get_response(url)
         if response is None:
             return None
+        #print(response)
         data = response.content.decode('utf-8')
         tree = etree.HTML(data)
         # 解析出js代码
@@ -100,21 +105,34 @@ class Pornhub:
         # 去除无用代码
         script = player[:player.find('playerObjList')]
         # 执行js函数返回 flashvars
-        js = execjs.compile(r'function flashvars(){' + script + ' return flashvars_' + data_id + ';}')
-        flashvars = js.call('flashvars')
-        # 几种清晰度
-        quality_list = ['quality_1080p', 'quality_720p', 'quality_480p', 'quality_240p', ]
-        quality_index = 0
+        # js = execjs.compile(r'function flashvars(){' + script + ' return flashvars_' + data_id + ';}')
+        # flashvars = js.call('flashvars')
+        # print(flashvars)
+        context = js2py.EvalJs()
+        js_content = 'function flashvars(){ '+ script +' return flashvars_' + data_id + ';}'
+        context.execute(js_content)
+        flashvars = context.flashvars()
+
+        VideoUrl = ''
+        for ele in flashvars['mediaDefinitions']:
+            if ele['format']=='mp4':
+                VideoUrl = ele['videoUrl']
+        response = self.__get_response(VideoUrl)
+        json = response.json()
+        mp4_url = json[-1]['videoUrl']
+        # # 几种清晰度
+        # quality_list = ['quality_1080p', 'quality_720p', 'quality_480p', 'quality_240p', ]
+        # quality_index = 0
         # 获取视频地址  始终获取最高品质
-        while True:
-            try:
-                mp4_url = flashvars[quality_list[quality_index]]
-                break
-            except IndexError as e:
-                print(e)
-                quality_index += 1
-                if quality_index > 3:
-                    raise Exception('解析视频错误!')
+        # while True:
+        #     try:
+        #         mp4_url = flashvars[quality_list[quality_index]]
+        #         break
+        #     except IndexError as e:
+        #         print(e)
+        #         quality_index += 1
+        #         if quality_index > 3:
+        #             raise Exception('解析视频错误!')
         return mp4_url
 
     def get_video_list(self, details_page):
